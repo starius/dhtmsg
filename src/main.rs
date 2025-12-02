@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     thread::sleep(Duration::from_secs(2));
     info!("bootstrapped: {}", dht.bootstrapped());
 
-    announce(&dht, local_infohash, hello_port);
+    announce(&dht, local_infohash);
 
     let recv_socket = socket.try_clone().context("failed to clone UDP socket")?;
     let recv_id = local_id.clone();
@@ -75,12 +75,11 @@ fn main() -> Result<()> {
             local_id,
             local_infohash,
             peer_infohash,
-            hello_port,
             args.announce_secs,
         );
     } else {
         info!("no peer provided; announcing and waiting for inbound hello. Ctrl+C to quit.");
-        idle_announce_loop(dht, local_infohash, hello_port, args.announce_secs);
+        idle_announce_loop(dht, local_infohash, args.announce_secs);
     }
 
     Ok(())
@@ -116,9 +115,10 @@ fn derive_infohash(id_hex: &str) -> Result<Id> {
     Id::from_bytes(digest.as_slice()).context("failed to convert digest into infohash")
 }
 
-fn announce(dht: &mainline::Dht, infohash: Id, port: u16) {
-    match dht.announce_peer(infohash, Some(port)) {
-        Ok(_) => info!("announced infohash {} on port {port}", infohash),
+fn announce(dht: &mainline::Dht, infohash: Id) {
+    // Use implied (observed) external port; we don't need to know it locally.
+    match dht.announce_peer(infohash, None) {
+        Ok(_) => info!("announced infohash {} (implied port)", infohash),
         Err(err) => warn!("announce failed: {err}"),
     }
 }
@@ -152,7 +152,6 @@ fn lookup_and_hello(
     local_id: String,
     local_infohash: Id,
     peer_infohash: Id,
-    hello_port: u16,
     announce_secs: u64,
 ) {
     let mut seen: HashSet<SocketAddrV4> = HashSet::new();
@@ -160,7 +159,7 @@ fn lookup_and_hello(
     info!("starting lookup loop; Ctrl+C to stop.");
     loop {
         if last_announce.elapsed() >= Duration::from_secs(announce_secs) {
-            announce(&dht, local_infohash, hello_port);
+            announce(&dht, local_infohash);
             last_announce = Instant::now();
         }
 
@@ -188,11 +187,11 @@ fn send_hello(socket: &UdpSocket, addr: SocketAddrV4, local_id: &str) -> Result<
     Ok(())
 }
 
-fn idle_announce_loop(dht: mainline::Dht, infohash: Id, port: u16, announce_secs: u64) {
+fn idle_announce_loop(dht: mainline::Dht, infohash: Id, announce_secs: u64) {
     let mut last_announce = Instant::now();
     loop {
         if last_announce.elapsed() >= Duration::from_secs(announce_secs) {
-            announce(&dht, infohash, port);
+            announce(&dht, infohash);
             last_announce = Instant::now();
         }
 

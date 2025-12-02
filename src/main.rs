@@ -26,10 +26,6 @@ struct Args {
     #[arg(long)]
     peer: Option<String>,
 
-    /// UDP port for both DHT socket and hello listener
-    #[arg(long, default_value_t = 40001)]
-    port: u16,
-
     /// Re-announce interval in seconds
     #[arg(long, default_value_t = 45)]
     announce_secs: u64,
@@ -41,20 +37,23 @@ fn main() -> Result<()> {
 
     let local_id = args.id.clone().unwrap_or_else(random_hex_id);
     let local_infohash = derive_infohash(&local_id)?;
-    let hello_port = args.port;
     info!("local ID: {local_id}");
     info!("derived infohash: {}", local_infohash);
 
-    let socket = UdpSocket::bind(("0.0.0.0", hello_port))
-        .with_context(|| format!("failed to bind UDP port {hello_port}"))?;
+    let socket = UdpSocket::bind(("0.0.0.0", 0)).context("failed to bind UDP socket")?;
     socket
         .set_nonblocking(true)
         .context("failed to set socket to non-blocking")?;
+    let hello_port = socket
+        .local_addr()
+        .context("failed to read bound port")?
+        .port();
+    info!("hello socket bound on UDP port {hello_port}");
 
     let dht = mainline::Dht::builder()
-        .port(args.port)
         .build()
         .context("failed to start DHT node")?;
+    info!("DHT socket listening on {}", dht.info().local_addr());
 
     info!("bootstrapping the DHT...");
     thread::sleep(Duration::from_secs(2));
@@ -76,7 +75,7 @@ fn main() -> Result<()> {
             local_infohash,
             peer_infohash,
             hello_port,
-            args,
+            args.announce_secs,
         );
     } else {
         info!("no peer provided; announcing and waiting for inbound hello. Ctrl+C to quit.");
@@ -149,13 +148,13 @@ fn lookup_and_hello(
     local_infohash: Id,
     peer_infohash: Id,
     hello_port: u16,
-    args: Args,
+    announce_secs: u64,
 ) {
     let mut seen: HashSet<SocketAddrV4> = HashSet::new();
     let mut last_announce = Instant::now();
     info!("starting lookup loop; Ctrl+C to stop.");
     loop {
-        if last_announce.elapsed() >= Duration::from_secs(args.announce_secs) {
+        if last_announce.elapsed() >= Duration::from_secs(announce_secs) {
             announce(&dht, local_infohash, hello_port);
             last_announce = Instant::now();
         }

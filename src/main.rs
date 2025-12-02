@@ -62,7 +62,8 @@ fn main() -> Result<()> {
     announce(&dht, local_infohash, hello_port);
 
     let recv_socket = socket.try_clone().context("failed to clone UDP socket")?;
-    thread::spawn(move || recv_loop(recv_socket));
+    let recv_id = local_id.clone();
+    thread::spawn(move || recv_loop(recv_socket, recv_id));
 
     if let Some(peer_id) = args.peer.as_deref() {
         let peer_infohash = derive_infohash(peer_id)?;
@@ -122,13 +123,17 @@ fn announce(dht: &mainline::Dht, infohash: Id, port: u16) {
     }
 }
 
-fn recv_loop(socket: UdpSocket) {
+fn recv_loop(socket: UdpSocket, local_id: String) {
     let mut buf = [0u8; 1500];
     loop {
         match socket.recv_from(&mut buf) {
             Ok((len, peer)) => {
                 let msg = String::from_utf8_lossy(&buf[..len]);
                 info!("received hello from {peer}: {msg}");
+                let ack = format!("hello-ack from {local_id}");
+                if let Err(err) = socket.send_to(ack.as_bytes(), peer) {
+                    warn!("failed to send ack to {peer}: {err}");
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(200));

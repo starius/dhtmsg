@@ -40,7 +40,15 @@ fn main() -> Result<()> {
     info!("local ID: {local_id}");
     info!("derived infohash: {}", local_infohash);
 
-    let socket = UdpSocket::bind(("0.0.0.0", 0)).context("failed to bind UDP socket")?;
+    // Learn a public port for the app by briefly starting a DHT on a chosen local port.
+    let port_info = discover_public_port()?;
+    info!(
+        "discovered local hello port {} with public {:?}",
+        port_info.local_port, port_info.public_port
+    );
+
+    let socket = UdpSocket::bind(("0.0.0.0", port_info.local_port))
+        .with_context(|| format!("failed to bind UDP socket on {}", port_info.local_port))?;
     socket
         .set_nonblocking(true)
         .context("failed to set socket to non-blocking")?;
@@ -50,7 +58,7 @@ fn main() -> Result<()> {
         .port();
     info!("hello socket bound on UDP port {hello_port}");
 
-    // Bind the DHT to an ephemeral port too (avoid default 6881) so NAT can map it.
+    // Bind the long-lived DHT to an ephemeral port (avoid default 6881).
     let dht = mainline::Dht::builder()
         .port(0)
         .build()
@@ -61,7 +69,8 @@ fn main() -> Result<()> {
     thread::sleep(Duration::from_secs(2));
     info!("bootstrapped: {}", dht.bootstrapped());
 
-    announce(&dht, local_infohash, hello_port);
+    let announced_port = port_info.public_port.unwrap_or(hello_port);
+    announce(&dht, local_infohash, announced_port);
 
     let recv_socket = socket.try_clone().context("failed to clone UDP socket")?;
     let recv_id = local_id.clone();
@@ -78,11 +87,11 @@ fn main() -> Result<()> {
             local_infohash,
             peer_infohash,
             args.announce_secs,
-            hello_port,
+            announced_port,
         );
     } else {
         info!("no peer provided; announcing and waiting for inbound hello. Ctrl+C to quit.");
-        idle_announce_loop(dht, local_infohash, args.announce_secs, hello_port);
+        idle_announce_loop(dht, local_infohash, args.announce_secs, announced_port);
     }
 
     Ok(())
@@ -116,6 +125,27 @@ fn derive_infohash(id_hex: &str) -> Result<Id> {
     hasher.update(&raw_id);
     let digest = hasher.finalize();
     Id::from_bytes(digest.as_slice()).context("failed to convert digest into infohash")
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PortInfo {
+    local_port: u16,
+    public_port: Option<u16>,
+}
+
+fn discover_public_port() -> Result<PortInfo> {
+    // Let DHT bind a port (0 = OS picks). We reuse that local port for the app.
+    let temp = mainline::Dht::builder().port(0).build()?;
+    thread::sleep(Duration::from_secs(2));
+    let info = temp.info();
+    let local_port = info.local_addr().port();
+    let public_port = info.public_address().map(|a| a.port());
+    drop(temp);
+    thread::sleep(Duration::from_millis(200));
+    Ok(PortInfo {
+        local_port,
+        public_port,
+    })
 }
 
 fn announce(dht: &mainline::Dht, infohash: Id, port: u16) {

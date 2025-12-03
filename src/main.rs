@@ -171,14 +171,21 @@ fn recv_loop(socket: UdpSocket, local_id: String) {
     let mut buf = [0u8; 1500];
     loop {
         match socket.recv_from(&mut buf) {
-            Ok((len, peer)) => {
-                let msg = String::from_utf8_lossy(&buf[..len]);
-                info!("received hello from {peer}: {msg}");
-                let ack = format!("hello-ack from {local_id}");
-                if let Err(err) = socket.send_to(ack.as_bytes(), peer) {
-                    warn!("failed to send ack to {peer}: {err}");
+            Ok((len, peer)) => match std::str::from_utf8(&buf[..len]) {
+                Ok(msg) if msg.starts_with("hello") || msg.contains("hello") => {
+                    info!("received hello from {peer}: {msg}");
+                    let ack = format!("hello-ack from {local_id}");
+                    if let Err(err) = socket.send_to(ack.as_bytes(), peer) {
+                        warn!("failed to send ack to {peer}: {err}");
+                    }
                 }
-            }
+                Ok(_other) => {
+                    info!("received non-hello message from {peer} (ignored)");
+                }
+                Err(_) => {
+                    info!("received non-UTF8 message from {peer} (ignored)");
+                }
+            },
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(200));
             }

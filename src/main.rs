@@ -136,10 +136,21 @@ struct PortInfo {
 fn discover_public_port() -> Result<PortInfo> {
     // Let DHT bind a port (0 = OS picks). We reuse that local port for the app.
     let temp = mainline::Dht::builder().port(0).build()?;
-    thread::sleep(Duration::from_secs(2));
-    let info = temp.info();
-    let local_port = info.local_addr().port();
-    let public_port = info.public_address().map(|a| a.port());
+    let mut public_port: Option<u16> = None;
+    let mut attempts: u32 = 0;
+    while public_port.is_none() {
+        let info = temp.info();
+        public_port = info.public_address().map(|a| a.port());
+        if public_port.is_some() {
+            break;
+        }
+        attempts += 1;
+        if attempts % 20 == 0 {
+            info!("waiting for public port discovery ({} checks)...", attempts);
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    let local_port = temp.info().local_addr().port();
     drop(temp);
     thread::sleep(Duration::from_millis(200));
     Ok(PortInfo {
